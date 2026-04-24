@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Spipes</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app" aria-label="Spipes game">
+      <section class="game-shell">
+        <div class="topbar">
+          <div>
+            <p class="eyebrow">Spipes</p>
+            <h1>Connect the pipes</h1>
+          </div>
+          <div class="actions" aria-label="Game controls">
+            <button id="prevLevel" type="button" aria-label="Previous unlocked level">‹</button>
+            <button id="restart" type="button">Restart</button>
+            <button id="nextLevel" type="button" aria-label="Next unlocked level">›</button>
+          </div>
+        </div>
+
+        <canvas id="game" aria-label="Spipes puzzle board"></canvas>
+
+        <div class="footer">
+          <span id="status">Loading...</span>
+          <span>Tap a queue tile to rotate it. Tap the grid to place it.</span>
+        </div>
+      </section>
+    </main>
+
+    <script src="src/main.js"></script>
+  </body>
+</html>
