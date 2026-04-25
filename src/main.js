@@ -2,11 +2,13 @@ const canvas = document.querySelector("#game");
 const ctx = canvas.getContext("2d");
 const statusEl = document.querySelector("#status");
 const restartButton = document.querySelector("#restart");
+const skipButton = document.querySelector("#skipPiece");
 const prevButton = document.querySelector("#prevLevel");
 const nextButton = document.querySelector("#nextLevel");
 
 const STORAGE_KEY = "spipes.highestUnlocked";
 const WATER_SPEED = 0.0042;
+const CONVEYOR_SIZE = 7;
 
 const DIRECTIONS = {
   up: { dx: 0, dy: -1, opposite: "down" },
@@ -38,24 +40,7 @@ const LEVELS = [
       [7, 1],
       [7, 6],
     ],
-    pressureLimit: 15,
-    pieceBag: [
-      "elbow",
-      "straight",
-      "straight",
-      "elbow",
-      "straight",
-      "straight",
-      "elbow",
-      "straight",
-      "straight",
-      "elbow",
-      "straight",
-      "straight",
-      "elbow",
-      "elbow",
-      "tee",
-    ],
+    pieceCycle: ["straight", "elbow", "straight", "tee", "elbow", "straight", "cross"],
   },
   {
     name: "Basement Bend",
@@ -72,23 +57,7 @@ const LEVELS = [
       [6, 4],
       [8, 5],
     ],
-    pressureLimit: 14,
-    pieceBag: [
-      "straight",
-      "straight",
-      "straight",
-      "straight",
-      "elbow",
-      "straight",
-      "straight",
-      "straight",
-      "elbow",
-      "straight",
-      "straight",
-      "straight",
-      "tee",
-      "elbow",
-    ],
+    pieceCycle: ["elbow", "straight", "straight", "tee", "straight", "elbow", "cross", "straight"],
   },
   {
     name: "Toolbox Trouble",
@@ -107,25 +76,7 @@ const LEVELS = [
       [7, 5],
       [8, 5],
     ],
-    pressureLimit: 16,
-    pieceBag: [
-      "straight",
-      "straight",
-      "elbow",
-      "straight",
-      "straight",
-      "elbow",
-      "straight",
-      "straight",
-      "tee",
-      "straight",
-      "straight",
-      "elbow",
-      "straight",
-      "straight",
-      "elbow",
-      "cross",
-    ],
+    pieceCycle: ["straight", "elbow", "tee", "straight", "elbow", "cross", "straight", "tee"],
   },
   {
     name: "Pressure Alley",
@@ -145,25 +96,7 @@ const LEVELS = [
       [8, 4],
       [8, 5],
     ],
-    pressureLimit: 16,
-    pieceBag: [
-      "elbow",
-      "straight",
-      "elbow",
-      "straight",
-      "straight",
-      "elbow",
-      "elbow",
-      "straight",
-      "straight",
-      "straight",
-      "elbow",
-      "straight",
-      "elbow",
-      "straight",
-      "straight",
-      "cross",
-    ],
+    pieceCycle: ["elbow", "straight", "tee", "elbow", "straight", "cross", "straight", "tee", "elbow"],
   },
   {
     name: "Grand Plumbing Finale",
@@ -185,8 +118,7 @@ const LEVELS = [
       [7, 4],
       [8, 2],
     ],
-    pressureLimit: 16,
-    pieceBag: ["tee", "elbow", "straight", "cross", "elbow", "straight", "tee", "elbow", "straight", "elbow", "cross", "straight"],
+    pieceCycle: ["tee", "elbow", "straight", "cross", "straight", "elbow", "tee", "cross"],
   },
 ];
 
@@ -196,7 +128,8 @@ let layout = {
   cell: 0,
   boardX: 0,
   boardY: 0,
-  queueRects: [],
+  conveyorY: 0,
+  conveyorRects: [],
 };
 
 let game = createGame();
@@ -210,6 +143,7 @@ requestAnimationFrame(tick);
 window.addEventListener("resize", resizeCanvas);
 canvas.addEventListener("pointerdown", handlePointerDown);
 restartButton.addEventListener("click", () => loadLevel(game.levelIndex));
+skipButton.addEventListener("click", skipConveyorPiece);
 prevButton.addEventListener("click", () => loadLevel(Math.max(0, game.levelIndex - 1)));
 nextButton.addEventListener("click", handleNextLevel);
 
@@ -218,9 +152,11 @@ function createGame() {
     levelIndex: 0,
     level: null,
     board: [],
-    queue: [],
-    selectedQueueIndex: 0,
-    movesLeft: 0,
+    conveyor: [],
+    selectedConveyorIndex: 0,
+    pieceCursor: 0,
+    placedPieces: 0,
+    discardedPieces: 0,
     state: "playing",
     connectedPath: [],
     waterProgress: 0,
@@ -238,21 +174,38 @@ function loadLevel(index) {
   game.levelIndex = clampedIndex;
   game.level = level;
   game.board = Array.from({ length: level.height }, () => Array(level.width).fill(null));
-  game.queue = level.pieceBag.map((type) => ({
-    type,
-    rotation: 0,
-    openings: { ...PIECES[type].openings },
-  }));
-  game.selectedQueueIndex = 0;
-  game.movesLeft = level.pressureLimit;
+  game.conveyor = [];
+  game.selectedConveyorIndex = 0;
+  game.pieceCursor = 0;
+  game.placedPieces = 0;
+  game.discardedPieces = 0;
+  fillConveyor();
   game.state = "playing";
   game.connectedPath = [];
   game.waterProgress = 0;
   game.waterStartedAt = 0;
   game.invalidFlash = 0;
   game.invalidCell = null;
-  game.message = `${level.name}: connect faucet to outlet.`;
+  game.message = `${level.name}: choose pieces from the conveyor belt.`;
   updateDom();
+}
+
+function fillConveyor() {
+  while (game.conveyor.length < CONVEYOR_SIZE) {
+    game.conveyor.push(nextConveyorPiece());
+  }
+  game.selectedConveyorIndex = Math.min(game.selectedConveyorIndex, game.conveyor.length - 1);
+}
+
+function nextConveyorPiece() {
+  const cycle = game.level.pieceCycle;
+  const type = cycle[game.pieceCursor % cycle.length];
+  game.pieceCursor += 1;
+  return {
+    type,
+    rotation: 0,
+    openings: { ...PIECES[type].openings },
+  };
 }
 
 function resizeCanvas() {
@@ -283,10 +236,10 @@ function handlePointerDown(event) {
   const x = event.clientX - rect.left;
   const y = event.clientY - rect.top;
 
-  const queueIndex = layout.queueRects.findIndex((slot) => pointInRect(x, y, slot));
-  if (queueIndex >= 0 && game.state === "playing") {
-    game.selectedQueueIndex = queueIndex;
-    rotateQueuePiece(queueIndex);
+  const conveyorIndex = layout.conveyorRects.findIndex((slot) => pointInRect(x, y, slot));
+  if (conveyorIndex >= 0 && game.state === "playing") {
+    game.selectedConveyorIndex = conveyorIndex;
+    rotateConveyorPiece(conveyorIndex);
     updateDom();
     return;
   }
@@ -298,23 +251,23 @@ function handlePointerDown(event) {
   placeSelectedPiece(cell.x, cell.y);
 }
 
-function rotateQueuePiece(index) {
-  const piece = game.queue[index];
+function rotateConveyorPiece(index) {
+  const piece = game.conveyor[index];
   if (!piece) return;
   piece.rotation = (piece.rotation + 1) % 4;
   piece.openings = rotateOpenings(piece.openings);
 }
 
 function placeSelectedPiece(x, y) {
-  if (!canPlaceAt(x, y) || game.queue.length === 0) {
+  if (!canPlaceAt(x, y) || game.conveyor.length === 0) {
     flashInvalid(x, y);
     return;
   }
 
-  const [piece] = game.queue.splice(game.selectedQueueIndex, 1);
+  const [piece] = game.conveyor.splice(game.selectedConveyorIndex, 1);
   game.board[y][x] = piece;
-  game.movesLeft -= 1;
-  game.selectedQueueIndex = Math.min(game.selectedQueueIndex, Math.max(0, game.queue.length - 1));
+  game.placedPieces += 1;
+  fillConveyor();
 
   const path = findConnectedPath();
   if (path.length > 0) {
@@ -327,18 +280,37 @@ function placeSelectedPiece(x, y) {
         ? "All pipes connected. Spipes is watertight!"
         : "Water is flowing. Next level unlocked.";
     unlockLevel(game.levelIndex + 1);
-  } else if (game.movesLeft <= 0 || game.queue.length === 0) {
+  } else if (isBoardFull()) {
     game.state = "lost";
-    game.message = "Pressure dropped. Restart and try a cleaner route.";
+    game.message = "The board is full. Restart and leave yourself more room.";
   } else {
-    game.message = "Keep building the line.";
+    game.message = "Keep building, or skip pieces that do not fit your route.";
   }
 
   updateDom();
 }
 
+function skipConveyorPiece() {
+  if (game.state !== "playing" || game.conveyor.length === 0) return;
+  game.conveyor.shift();
+  game.discardedPieces += 1;
+  game.selectedConveyorIndex = 0;
+  fillConveyor();
+  game.message = "Piece discarded from the left side of the belt.";
+  updateDom();
+}
+
 function canPlaceAt(x, y) {
   return isInsideGrid(x, y) && !game.board[y][x] && !isObstacle(x, y);
+}
+
+function isBoardFull() {
+  for (let y = 0; y < game.level.height; y += 1) {
+    for (let x = 0; x < game.level.width; x += 1) {
+      if (!game.board[y][x] && !isObstacle(x, y)) return false;
+    }
+  }
+  return true;
 }
 
 function flashInvalid(x, y) {
@@ -400,7 +372,7 @@ function draw() {
   drawHud();
   drawBoard();
   drawFixtures();
-  drawQueue();
+  drawConveyor();
   drawOverlayMessage();
 }
 
@@ -408,10 +380,10 @@ function computeLayout(width, height) {
   const level = game.level || LEVELS[0];
   const padding = clamp(width * 0.032, 14, 30);
   const hudHeight = clamp(height * 0.11, 68, 92);
-  const queueHeight = clamp(height * 0.2, 116, 156);
+  const conveyorHeight = clamp(height * 0.2, 116, 156);
   const sideSpace = clamp(width * 0.12, 54, 112);
   const availableW = width - padding * 2 - sideSpace;
-  const availableH = height - hudHeight - queueHeight - padding * 2;
+  const availableH = height - hudHeight - conveyorHeight - padding * 2;
   const cell = Math.floor(Math.max(24, Math.min(availableW / level.width, availableH / level.height)));
   const boardW = cell * level.width;
   const boardH = cell * level.height;
@@ -419,7 +391,7 @@ function computeLayout(width, height) {
   layout.cell = cell;
   layout.boardX = (width - boardW) / 2;
   layout.boardY = hudHeight + Math.max(4, (availableH - boardH) / 2);
-  layout.queueY = height - queueHeight + 18;
+  layout.conveyorY = height - conveyorHeight + 18;
 }
 
 function drawBackground(width, height) {
@@ -440,10 +412,11 @@ function drawBackground(width, height) {
 
 function drawHud() {
   const levelNumber = game.levelIndex + 1;
-  const pressureRatio = game.movesLeft / game.level.pressureLimit;
+  const freeCells = countFreeCells();
   const x = 18;
   const y = 16;
   const meterW = clamp(layout.width * 0.26, 132, 240);
+  const freeRatio = freeCells / countPlayableCells();
 
   ctx.fillStyle = "rgba(255, 253, 245, 0.88)";
   roundedRect(x, y, meterW + 210, 50, 8);
@@ -457,19 +430,33 @@ function drawHud() {
   ctx.fillText(`Level ${levelNumber}: ${game.level.name}`, x + 14, y + 22);
   ctx.font = "800 13px system-ui, sans-serif";
   ctx.fillStyle = "#65758b";
-  ctx.fillText(`${game.queue.length} pieces left`, x + 14, y + 41);
+  ctx.fillText(`${game.placedPieces} placed · ${game.discardedPieces} skipped`, x + 14, y + 41);
 
   const mx = x + 190;
   const my = y + 28;
   ctx.fillStyle = "#dfedf5";
   roundedRect(mx, my, meterW, 12, 6);
   ctx.fill();
-  ctx.fillStyle = pressureRatio <= 0.25 ? "#ff6b6b" : "#1fa6ff";
-  roundedRect(mx, my, meterW * Math.max(0, pressureRatio), 12, 6);
+  ctx.fillStyle = freeRatio <= 0.25 ? "#ff6b6b" : "#7bd88f";
+  roundedRect(mx, my, meterW * Math.max(0, freeRatio), 12, 6);
   ctx.fill();
   ctx.strokeStyle = "#243447";
   ctx.lineWidth = 2;
   ctx.stroke();
+}
+
+function countPlayableCells() {
+  return game.level.width * game.level.height - game.level.obstacles.length;
+}
+
+function countFreeCells() {
+  let free = 0;
+  for (let y = 0; y < game.level.height; y += 1) {
+    for (let x = 0; x < game.level.width; x += 1) {
+      if (!game.board[y][x] && !isObstacle(x, y)) free += 1;
+    }
+  }
+  return free;
 }
 
 function drawBoard() {
@@ -598,16 +585,16 @@ function drawOutlet(x, y, cell) {
   ctx.restore();
 }
 
-function drawQueue() {
-  const slotCount = Math.min(game.queue.length, 12);
+function drawConveyor() {
+  const slotCount = game.conveyor.length;
   const width = layout.width;
   const slot = clamp((width - 48) / Math.max(5, slotCount), 42, 72);
   const gap = clamp(slot * 0.16, 6, 12);
   const total = slotCount * slot + Math.max(0, slotCount - 1) * gap;
   const startX = (width - total) / 2;
-  const y = layout.queueY;
+  const y = layout.conveyorY;
 
-  layout.queueRects = [];
+  layout.conveyorRects = [];
 
   ctx.fillStyle = "rgba(255, 253, 245, 0.9)";
   roundedRect(Math.max(10, startX - 16), y - 16, Math.min(width - 20, total + 32), slot + 46, 8);
@@ -616,16 +603,18 @@ function drawQueue() {
   ctx.lineWidth = 3;
   ctx.stroke();
 
+  drawConveyorBelt(startX - 6, y + slot * 0.5, total + 12, slot * 0.42);
+
   for (let i = 0; i < slotCount; i += 1) {
     const x = startX + i * (slot + gap);
-    const piece = game.queue[i];
-    layout.queueRects.push({ x, y, width: slot, height: slot });
+    const piece = game.conveyor[i];
+    layout.conveyorRects.push({ x, y, width: slot, height: slot });
 
-    ctx.fillStyle = i === game.selectedQueueIndex ? "#fff1a8" : "#ffffff";
+    ctx.fillStyle = i === game.selectedConveyorIndex ? "#fff1a8" : "#ffffff";
     roundedRect(x, y, slot, slot, 8);
     ctx.fill();
-    ctx.strokeStyle = i === game.selectedQueueIndex ? "#ef476f" : "#243447";
-    ctx.lineWidth = i === game.selectedQueueIndex ? 4 : 2;
+    ctx.strokeStyle = i === game.selectedConveyorIndex ? "#ef476f" : "#243447";
+    ctx.lineWidth = i === game.selectedConveyorIndex ? 4 : 2;
     ctx.stroke();
 
     drawPipePiece(x + 4, y + 4, slot - 8, piece.openings, { water: 0, preview: true });
@@ -634,8 +623,36 @@ function drawQueue() {
   ctx.fillStyle = "#243447";
   ctx.font = "900 13px system-ui, sans-serif";
   ctx.textAlign = "center";
-  ctx.fillText("PIPE QUEUE", width / 2, y + slot + 27);
+  ctx.fillText("CONVEYOR BELT", width / 2, y + slot + 27);
   ctx.textAlign = "start";
+}
+
+function drawConveyorBelt(x, y, width, height) {
+  ctx.save();
+  ctx.fillStyle = "#485766";
+  roundedRect(x, y - height * 0.5, width, height, height * 0.5);
+  ctx.fill();
+  ctx.strokeStyle = "#243447";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.35)";
+  ctx.lineWidth = 3;
+  for (let mark = x + 18; mark < x + width; mark += 34) {
+    ctx.beginPath();
+    ctx.moveTo(mark, y - height * 0.28);
+    ctx.lineTo(mark - 12, y + height * 0.28);
+    ctx.stroke();
+  }
+
+  ctx.fillStyle = "#ef476f";
+  ctx.beginPath();
+  ctx.moveTo(x - 12, y);
+  ctx.lineTo(x + 4, y - 9);
+  ctx.lineTo(x + 4, y + 9);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
 }
 
 function drawOverlayMessage() {
@@ -656,7 +673,7 @@ function drawOverlayMessage() {
   ctx.fillStyle = "#243447";
   ctx.textAlign = "center";
   ctx.font = "900 25px system-ui, sans-serif";
-  ctx.fillText(game.state === "won" ? "Connected!" : "Pressure lost", width / 2, y + 38);
+  ctx.fillText(game.state === "won" ? "Connected!" : "No room left", width / 2, y + 38);
   ctx.font = "700 15px system-ui, sans-serif";
   ctx.fillStyle = "#65758b";
   wrapText(game.message, width / 2, y + 64, panelW - 36, 20);
@@ -758,7 +775,8 @@ function cellKey(x, y) {
 }
 
 function updateDom() {
-  statusEl.textContent = `Level ${game.levelIndex + 1}/${LEVELS.length} · ${game.movesLeft} pressure`;
+  statusEl.textContent = `Level ${game.levelIndex + 1}/${LEVELS.length} · ${countFreeCells()} free cells`;
+  skipButton.disabled = game.state !== "playing";
   prevButton.disabled = game.levelIndex <= 0;
   nextButton.disabled = game.levelIndex >= Math.min(game.highestUnlocked, LEVELS.length - 1);
 }
@@ -786,7 +804,7 @@ function getHighestUnlocked() {
 
 function validateLevels(levels) {
   levels.forEach((level, index) => {
-    const required = ["width", "height", "source", "sink", "obstacles", "pieceBag", "pressureLimit"];
+    const required = ["width", "height", "source", "sink", "obstacles", "pieceCycle"];
     required.forEach((key) => {
       if (!(key in level)) {
         throw new Error(`Level ${index + 1} is missing "${key}".`);
@@ -800,7 +818,10 @@ function validateLevels(levels) {
         throw new Error(`Level ${index + 1} has an obstacle outside the board.`);
       }
     });
-    level.pieceBag.forEach((type) => {
+    if (level.pieceCycle.length === 0) {
+      throw new Error(`Level ${index + 1} needs at least one conveyor piece.`);
+    }
+    level.pieceCycle.forEach((type) => {
       if (!PIECES[type]) {
         throw new Error(`Level ${index + 1} references unknown piece "${type}".`);
       }
