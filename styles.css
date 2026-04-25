@@ -103,8 +103,7 @@ h1 {
   flex: 0 0 auto;
 }
 
-#restart,
-#skipPiece {
+#restart {
   padding: 0 18px;
 }
 
@@ -148,8 +147,7 @@ h1 {
     width: 100%;
   }
 
-  #restart,
-  #skipPiece {
+  #restart {
     flex: 1;
   }
 
