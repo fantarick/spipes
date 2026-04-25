@@ -9,6 +9,7 @@ const STORAGE_KEY = "spipes.highestUnlocked";
 const WATER_SPEED = 0.0042;
 const CONVEYOR_VISIBLE_PIECES = 7;
 const CONVEYOR_SPEED = 0.055;
+const BUILD_TIME_SECONDS = 60;
 
 const DIRECTIONS = {
   up: { dx: 0, dy: -1, opposite: "down" },
@@ -161,6 +162,7 @@ function createGame() {
     nextPieceId: 1,
     placedPieces: 0,
     discardedPieces: 0,
+    timerRemaining: BUILD_TIME_SECONDS,
     state: "playing",
     connectedPath: [],
     waterProgress: 0,
@@ -185,6 +187,7 @@ function loadLevel(index) {
   game.nextPieceId = 1;
   game.placedPieces = 0;
   game.discardedPieces = 0;
+  game.timerRemaining = BUILD_TIME_SECONDS;
   seedConveyor();
   game.state = "playing";
   game.connectedPath = [];
@@ -192,7 +195,7 @@ function loadLevel(index) {
   game.waterStartedAt = 0;
   game.invalidFlash = 0;
   game.invalidCell = null;
-  game.message = `${level.name}: grab pieces before they leave the belt.`;
+  game.message = `${level.name}: build a sealed route before the faucet opens.`;
   updateDom();
 }
 
@@ -230,10 +233,12 @@ function resizeCanvas() {
 }
 
 function tick(now) {
-  const delta = Math.min(40, now - lastTime);
+  const rawDelta = now - lastTime;
+  const delta = Math.min(40, rawDelta);
   lastTime = now;
   computeLayout(layout.width, layout.height);
   updateConveyor(delta);
+  updateTimer(rawDelta);
   if (game.invalidFlash > 0) {
     game.invalidFlash = Math.max(0, game.invalidFlash - delta);
   }
@@ -242,6 +247,19 @@ function tick(now) {
   }
   draw();
   requestAnimationFrame(tick);
+}
+
+function updateTimer(delta) {
+  if (game.state !== "playing") return;
+  const previousSecond = Math.ceil(game.timerRemaining);
+  game.timerRemaining = Math.max(0, game.timerRemaining - delta / 1000);
+  if (game.timerRemaining === 0) {
+    openFaucet();
+    return;
+  }
+  if (Math.ceil(game.timerRemaining) !== previousSecond) {
+    updateDom();
+  }
 }
 
 function handlePointerDown(event) {
@@ -280,25 +298,49 @@ function placeSelectedPiece(x, y) {
   game.board[y][x] = piece;
   game.placedPieces += 1;
 
-  const path = findConnectedPath();
-  if (path.length > 0) {
-    game.connectedPath = path;
-    game.state = "won";
-    game.waterProgress = 0;
-    game.waterStartedAt = performance.now();
-    game.message =
-      game.levelIndex === LEVELS.length - 1
-        ? "All pipes connected. Spipes is watertight!"
-        : "Water is flowing. Next level unlocked.";
-    unlockLevel(game.levelIndex + 1);
+  const inspection = inspectWaterNetwork();
+  if (isNetworkReady(inspection)) {
+    game.connectedPath = inspection.path;
+    game.message = "Route sealed. Hold it until the faucet opens.";
   } else if (isBoardFull()) {
     game.state = "lost";
-    game.message = "The board is full. Restart and leave yourself more room.";
+    game.message = "The board is full before a sealed route is ready.";
   } else {
-    game.message = "Keep building. Unused pieces are destroyed when they leave the belt.";
+    game.message = "Keep building. Open pipe ends will leak when the faucet opens.";
   }
 
   updateDom();
+}
+
+function openFaucet() {
+  const inspection = inspectWaterNetwork();
+  game.connectedPath = inspection.path;
+  game.waterProgress = 0;
+  game.waterStartedAt = performance.now();
+
+  if (isNetworkReady(inspection)) {
+    game.state = "won";
+    game.message =
+      game.levelIndex === LEVELS.length - 1
+        ? "Pressure holds. Spipes is watertight!"
+        : "Pressure holds. Next level unlocked.";
+    unlockLevel(game.levelIndex + 1);
+  } else {
+    game.state = "lost";
+    if (!inspection.hasSourcePiece) {
+      game.message = "The faucet opened, but no pipe was attached to the inlet.";
+    } else if (!inspection.reachesSink) {
+      game.message = "The faucet opened, but the water never reached the outlet.";
+    } else {
+      game.message = "Pressure collapsed through an open pipe end.";
+    }
+  }
+
+  updateDom();
+}
+
+function isNetworkReady(inspection) {
+  return inspection.hasSourcePiece && inspection.reachesSink && inspection.leaks.length === 0;
 }
 
 function updateConveyor(delta) {
@@ -351,16 +393,29 @@ function flashInvalid(x, y, message = "That spot is blocked.") {
   updateDom();
 }
 
-function findConnectedPath() {
+function inspectWaterNetwork() {
   const { level } = game;
   const start = {
     x: level.source.x + DIRECTIONS[level.source.dir].dx,
     y: level.source.y + DIRECTIONS[level.source.dir].dy,
   };
-  if (!isInsideGrid(start.x, start.y)) return [];
+  const result = {
+    hasSourcePiece: false,
+    reachesSink: false,
+    leaks: [],
+    path: [],
+  };
+  if (!isInsideGrid(start.x, start.y)) {
+    result.leaks.push({ x: level.source.x, y: level.source.y, dir: level.source.dir });
+    return result;
+  }
 
   const startPiece = game.board[start.y][start.x];
-  if (!startPiece || !startPiece.openings[DIRECTIONS[level.source.dir].opposite]) return [];
+  if (!startPiece || !startPiece.openings[DIRECTIONS[level.source.dir].opposite]) {
+    result.leaks.push({ x: start.x, y: start.y, dir: DIRECTIONS[level.source.dir].opposite });
+    return result;
+  }
+  result.hasSourcePiece = true;
 
   const queue = [{ ...start, path: [{ ...start }] }];
   const visited = new Set([cellKey(start.x, start.y)]);
@@ -376,13 +431,27 @@ function findConnectedPath() {
         y: current.y + DIRECTIONS[dir].dy,
       };
 
-      if (next.x === level.sink.x && next.y === level.sink.y && dir === DIRECTIONS[level.sink.dir].opposite) {
-        return current.path;
+      if (next.x === level.source.x && next.y === level.source.y && dir === DIRECTIONS[level.source.dir].opposite) {
+        continue;
       }
 
-      if (!isInsideGrid(next.x, next.y)) continue;
+      if (next.x === level.sink.x && next.y === level.sink.y && dir === DIRECTIONS[level.sink.dir].opposite) {
+        result.reachesSink = true;
+        if (result.path.length === 0) {
+          result.path = current.path;
+        }
+        continue;
+      }
+
+      if (!isInsideGrid(next.x, next.y) || isObstacle(next.x, next.y)) {
+        result.leaks.push({ x: current.x, y: current.y, dir });
+        continue;
+      }
       const nextPiece = game.board[next.y][next.x];
-      if (!nextPiece || !nextPiece.openings[DIRECTIONS[dir].opposite]) continue;
+      if (!nextPiece || !nextPiece.openings[DIRECTIONS[dir].opposite]) {
+        result.leaks.push({ x: current.x, y: current.y, dir });
+        continue;
+      }
 
       const key = cellKey(next.x, next.y);
       if (visited.has(key)) continue;
@@ -391,7 +460,7 @@ function findConnectedPath() {
     }
   }
 
-  return [];
+  return result;
 }
 
 function draw() {
@@ -447,14 +516,13 @@ function drawBackground(width, height) {
 
 function drawHud() {
   const levelNumber = game.levelIndex + 1;
-  const freeCells = countFreeCells();
   const x = 18;
   const y = 16;
   const meterW = clamp(layout.width * 0.26, 132, 240);
-  const freeRatio = freeCells / countPlayableCells();
+  const timeRatio = game.timerRemaining / BUILD_TIME_SECONDS;
 
   ctx.fillStyle = "rgba(255, 253, 245, 0.88)";
-  roundedRect(x, y, meterW + 210, 50, 8);
+  roundedRect(x, y, meterW + 240, 62, 8);
   ctx.fill();
   ctx.strokeStyle = "#243447";
   ctx.lineWidth = 3;
@@ -465,23 +533,23 @@ function drawHud() {
   ctx.fillText(`Level ${levelNumber}: ${game.level.name}`, x + 14, y + 22);
   ctx.font = "800 13px system-ui, sans-serif";
   ctx.fillStyle = "#65758b";
-  ctx.fillText(`${game.placedPieces} placed · ${game.discardedPieces} destroyed`, x + 14, y + 41);
+  ctx.fillText(`${game.placedPieces} placed · ${game.discardedPieces} destroyed`, x + 14, y + 42);
 
   const mx = x + 190;
-  const my = y + 28;
+  const my = y + 35;
+  ctx.fillStyle = "#243447";
+  ctx.font = "900 16px system-ui, sans-serif";
+  ctx.fillText(formatTimer(game.timerRemaining), mx, y + 22);
+
   ctx.fillStyle = "#dfedf5";
   roundedRect(mx, my, meterW, 12, 6);
   ctx.fill();
-  ctx.fillStyle = freeRatio <= 0.25 ? "#ff6b6b" : "#7bd88f";
-  roundedRect(mx, my, meterW * Math.max(0, freeRatio), 12, 6);
+  ctx.fillStyle = timeRatio <= 0.18 ? "#ff6b6b" : "#7bd88f";
+  roundedRect(mx, my, meterW * Math.max(0, timeRatio), 12, 6);
   ctx.fill();
   ctx.strokeStyle = "#243447";
   ctx.lineWidth = 2;
   ctx.stroke();
-}
-
-function countPlayableCells() {
-  return game.level.width * game.level.height - game.level.obstacles.length;
 }
 
 function countFreeCells() {
@@ -706,7 +774,7 @@ function drawOverlayMessage() {
   ctx.fillStyle = "#243447";
   ctx.textAlign = "center";
   ctx.font = "900 25px system-ui, sans-serif";
-  ctx.fillText(game.state === "won" ? "Connected!" : "No room left", width / 2, y + 38);
+  ctx.fillText(game.state === "won" ? "Pressure holds!" : "Pressure failed", width / 2, y + 38);
   ctx.font = "700 15px system-ui, sans-serif";
   ctx.fillStyle = "#65758b";
   wrapText(game.message, width / 2, y + 64, panelW - 36, 20);
@@ -816,9 +884,16 @@ function cellKey(x, y) {
 }
 
 function updateDom() {
-  statusEl.textContent = `Level ${game.levelIndex + 1}/${LEVELS.length} · ${countFreeCells()} free cells`;
+  statusEl.textContent = `Level ${game.levelIndex + 1}/${LEVELS.length} · ${formatTimer(game.timerRemaining)} to faucet · ${countFreeCells()} free cells`;
   prevButton.disabled = game.levelIndex <= 0;
   nextButton.disabled = game.levelIndex >= Math.min(game.highestUnlocked, LEVELS.length - 1);
+}
+
+function formatTimer(seconds) {
+  const wholeSeconds = Math.max(0, Math.ceil(seconds));
+  const minutes = Math.floor(wholeSeconds / 60);
+  const remainingSeconds = String(wholeSeconds % 60).padStart(2, "0");
+  return `${minutes}:${remainingSeconds}`;
 }
 
 function handleNextLevel() {
