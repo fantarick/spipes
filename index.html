@@ -15,21 +15,30 @@
             <h1>Connect the pipes</h1>
           </div>
           <div class="actions" aria-label="Game controls">
-            <button id="prevLevel" type="button" aria-label="Previous unlocked level">‹</button>
+            <button id="prevLevel" type="button" aria-label="Previous unlocked level">&lsaquo;</button>
+            <button id="rotate" type="button" aria-label="Rotate selected pipe">Rotate</button>
             <button id="restart" type="button">Restart</button>
-            <button id="nextLevel" type="button" aria-label="Next unlocked level">›</button>
+            <button id="nextLevel" type="button" aria-label="Next unlocked level">&rsaquo;</button>
           </div>
         </div>
 
-        <canvas id="game" aria-label="Spipes puzzle board"></canvas>
+        <div class="stage">
+          <canvas id="game" aria-label="Spipes puzzle board"></canvas>
+          <div id="startScreen" class="start-screen" role="dialog" aria-labelledby="startTitle">
+            <p class="eyebrow">Spipes</p>
+            <h2 id="startTitle">Build the route before the faucet opens</h2>
+            <p>Grab moving pipes, preview your route, rotate the selected piece, then seal the line under pressure.</p>
+            <button id="startGame" type="button">Play</button>
+          </div>
+        </div>
 
         <div class="footer">
           <span id="status">Loading...</span>
-          <span>Tap a moving belt tile to select it. Tap the grid to place it.</span>
+          <span>Select a belt tile, rotate it with R, then place it on the grid.</span>
         </div>
       </section>
     </main>
 
-    <script src="src/main.js"></script>
+    <script type="module" src="src/main.js"></script>
   </body>
 </html>

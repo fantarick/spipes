@@ -107,6 +107,10 @@ h1 {
   padding: 0 18px;
 }
 
+.stage {
+  position: relative;
+}
+
 #game {
   display: block;
   width: 100%;
@@ -116,6 +120,47 @@ h1 {
   background: #e7f7ff;
   box-shadow: 0 18px 36px var(--shadow);
   touch-action: none;
+}
+
+.start-screen {
+  position: absolute;
+  inset: 4px;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 14px;
+  padding: clamp(22px, 6vw, 52px);
+  border-radius: 4px;
+  color: #17324d;
+  text-align: center;
+  background:
+    linear-gradient(180deg, rgba(231, 247, 255, 0.72), rgba(255, 248, 232, 0.92)),
+    rgba(255, 253, 245, 0.94);
+  backdrop-filter: blur(2px);
+}
+
+.start-screen[hidden] {
+  display: none;
+}
+
+.start-screen h2 {
+  max-width: 680px;
+  margin: 0;
+  font-size: clamp(2rem, 6vw, 4.6rem);
+  line-height: 0.96;
+}
+
+.start-screen p:not(.eyebrow) {
+  max-width: 520px;
+  margin: 0;
+  color: var(--muted);
+  font-size: clamp(0.95rem, 2.4vw, 1.15rem);
+  font-weight: 700;
+}
+
+.start-screen button {
+  min-width: 132px;
+  padding: 0 24px;
 }
 
 .footer {
@@ -145,9 +190,11 @@ h1 {
 
   .actions {
     width: 100%;
+    flex-wrap: wrap;
   }
 
-  #restart {
+  #restart,
+  #rotate {
     flex: 1;
   }
 
