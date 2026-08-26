@@ -1,8 +1,9 @@
 export const STORAGE_KEY = "spipes.highestUnlocked";
 export const WATER_SPEED = 0.0042;
 export const CONVEYOR_VISIBLE_PIECES = 7;
-export const CONVEYOR_SPEED = 0.055;
-export const BUILD_TIME_SECONDS = 60;
+export const DEFAULT_CONVEYOR_SPEED = 0.055;
+export const DEFAULT_BUILD_TIME_SECONDS = 60;
+export const DEFAULT_DIFFICULTY = "Normal";
 
 export const DIRECTIONS = {
   up: { dx: 0, dy: -1, opposite: "down" },

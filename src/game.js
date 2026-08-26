@@ -1,5 +1,17 @@
-import { BUILD_TIME_SECONDS, CONVEYOR_SPEED, CONVEYOR_VISIBLE_PIECES, DIRECTIONS, DIRECTION_ORDER, PIECES } from "./constants.js";
-import { LEVELS } from "./levels.js";
+import {
+  DEFAULT_BUILD_TIME_SECONDS,
+  CONVEYOR_VISIBLE_PIECES,
+  DIRECTIONS,
+  DIRECTION_ORDER,
+  PIECES,
+} from "./constants.js";
+import {
+  getLevelBuildTime,
+  getLevelConveyorSpeed,
+  getLevelDifficulty,
+  getPieceCycleType,
+  LEVELS,
+} from "./levels.js";
 import { rotateOpenings, rotateOpeningsBy } from "./pipe.js";
 import { conveyorSpacing, computeLayout, isInsideGrid, isObstacle } from "./layout.js";
 import { getHighestUnlocked, saveHighestUnlocked } from "./storage.js";
@@ -15,7 +27,7 @@ export function createGame() {
     nextPieceId: 1,
     placedPieces: 0,
     discardedPieces: 0,
-    timerRemaining: BUILD_TIME_SECONDS,
+    timerRemaining: DEFAULT_BUILD_TIME_SECONDS,
     state: "playing",
     connectedPath: [],
     waterProgress: 0,
@@ -41,7 +53,7 @@ export function loadLevel(game, layout, index, options = {}) {
   game.nextPieceId = 1;
   game.placedPieces = 0;
   game.discardedPieces = 0;
-  game.timerRemaining = BUILD_TIME_SECONDS;
+  game.timerRemaining = getLevelBuildTime(level);
   seedConveyor(game, layout);
   game.connectedPath = [];
   game.waterProgress = 0;
@@ -49,7 +61,7 @@ export function loadLevel(game, layout, index, options = {}) {
   game.invalidFlash = 0;
   game.invalidCell = null;
   game.hoverCell = null;
-  game.message = `${level.name}: build a sealed route before the faucet opens.`;
+  game.message = `${level.name} (${getLevelDifficulty(level)}): build a sealed route before the faucet opens.`;
   game.state = options.intro ? "intro" : "playing";
 }
 
@@ -74,7 +86,7 @@ export function updateConveyor(game, layout, delta) {
 
   const spacing = conveyorSpacing(layout);
   game.conveyor.forEach((piece) => {
-    piece.x -= CONVEYOR_SPEED * delta;
+    piece.x -= getLevelConveyorSpeed(game.level) * delta;
   });
 
   const beforeCount = game.conveyor.length;
@@ -138,9 +150,9 @@ export function placeSelectedPiece(game, x, y) {
     game.message = "Route sealed. Hold it until the faucet opens.";
   } else if (isBoardFull(game)) {
     game.state = "lost";
-    game.message = "The board is full before a sealed route is ready.";
+    game.message = buildFailureMessage(inspection, "The board is full.");
   } else {
-    game.message = "Keep building. Open pipe ends will leak when the faucet opens.";
+    game.message = buildProgressHint(inspection);
   }
 
   return true;
@@ -185,15 +197,23 @@ function seedConveyor(game, layout) {
 function nextConveyorPiece(game, x) {
   const cycle = game.level.pieceCycle;
   const cursor = game.pieceCursor;
-  const type = cycle[cursor % cycle.length];
-  const rotation = Math.floor(cursor / cycle.length) % 4;
+  const { type, turns } = resolvePieceCycleEntry(cycle[cursor % cycle.length], cursor, cycle.length);
   game.pieceCursor += 1;
 
   return {
     id: game.nextPieceId++,
     type,
     x,
-    openings: rotateOpeningsBy(PIECES[type].openings, rotation),
+    openings: rotateOpeningsBy(PIECES[type].openings, turns),
+  };
+}
+
+function resolvePieceCycleEntry(entry, cursor, cycleLength) {
+  const fallbackTurns = Math.floor(cursor / cycleLength) % 4;
+  const turns = typeof entry === "object" && entry && "turns" in entry ? entry.turns : fallbackTurns;
+  return {
+    type: getPieceCycleType(entry),
+    turns: normalizeTurns(turns),
   };
 }
 
@@ -212,18 +232,49 @@ function openFaucet(game) {
     unlockLevel(game, game.levelIndex + 1);
   } else {
     game.state = "lost";
-    if (!inspection.hasSourcePiece) {
-      game.message = "The faucet opened, but no pipe was attached to the inlet.";
-    } else if (!inspection.reachesSink) {
-      game.message = "The faucet opened, but the water never reached the outlet.";
-    } else {
-      game.message = "Pressure collapsed through an open pipe end.";
-    }
+    game.message = buildFailureMessage(inspection, "The faucet opened.");
   }
 }
 
 function isNetworkReady(inspection) {
   return inspection.hasSourcePiece && inspection.reachesSink && inspection.leaks.length === 0;
+}
+
+function buildProgressHint(inspection) {
+  if (!inspection.hasSourcePiece) {
+    return "Connect the inlet first. The faucet needs a pipe opening back into it.";
+  }
+  if (!inspection.reachesSink) {
+    return "The inlet is connected. Keep steering the route to the outlet.";
+  }
+  if (inspection.leaks.length > 0) {
+    return `${formatLeakSubject(inspection.leaks.length)} still open. Seal every end before time runs out.`;
+  }
+  return "Keep building. Open pipe ends will leak when the faucet opens.";
+}
+
+function buildFailureMessage(inspection, context) {
+  if (!inspection.hasSourcePiece) {
+    return `${context} The inlet has no matching pipe connected to it.`;
+  }
+  if (!inspection.reachesSink) {
+    return `${context} The route starts at the inlet, but it never reaches the outlet.`;
+  }
+  if (inspection.leaks.length > 0) {
+    return `${context} Water reaches the outlet, but ${formatLeakSubject(
+      inspection.leaks.length,
+    ).toLowerCase()} still leaking.`;
+  }
+  return `${context} The route is not sealed yet.`;
+}
+
+function formatLeakSubject(count) {
+  return count === 1 ? "1 pipe end is" : `${count} pipe ends are`;
+}
+
+function normalizeTurns(turns) {
+  if (!Number.isFinite(turns)) return 0;
+  return ((turns % 4) + 4) % 4;
 }
 
 function canPlaceAt(game, x, y) {

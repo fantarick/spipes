@@ -1,5 +1,5 @@
-import { BUILD_TIME_SECONDS, DIRECTIONS, DIRECTION_ORDER } from "./constants.js";
-import { LEVELS } from "./levels.js";
+import { DIRECTIONS, DIRECTION_ORDER } from "./constants.js";
+import { getLevelBuildTime, getLevelDifficulty, LEVELS } from "./levels.js";
 import { clamp } from "./math.js";
 import { getSelectedPiece } from "./game.js";
 import { computeLayout, isInsideGrid, isObstacle } from "./layout.js";
@@ -48,10 +48,13 @@ function drawHud(ctx, game, layout) {
   const x = 18;
   const y = 16;
   const meterW = clamp(layout.width * 0.26, 132, 240);
-  const timeRatio = game.timerRemaining / BUILD_TIME_SECONDS;
+  const panelW = clamp(meterW + 240, 280, layout.width - 36);
+  const mx = x + panelW - meterW - 14;
+  const textMaxW = Math.max(80, mx - x - 26);
+  const timeRatio = game.timerRemaining / getLevelBuildTime(game.level);
 
   ctx.fillStyle = "rgba(255, 253, 245, 0.88)";
-  roundedRect(ctx, x, y, meterW + 240, 62, 8);
+  roundedRect(ctx, x, y, panelW, 62, 8);
   ctx.fill();
   ctx.strokeStyle = "#243447";
   ctx.lineWidth = 3;
@@ -59,12 +62,19 @@ function drawHud(ctx, game, layout) {
 
   ctx.fillStyle = "#243447";
   ctx.font = "900 17px system-ui, sans-serif";
-  ctx.fillText(`Level ${levelNumber}: ${game.level.name}`, x + 14, y + 22);
+  ctx.fillText(fitText(ctx, `Level ${levelNumber}: ${game.level.name}`, textMaxW), x + 14, y + 22);
   ctx.font = "800 13px system-ui, sans-serif";
   ctx.fillStyle = "#65758b";
-  ctx.fillText(`${game.placedPieces} placed - ${game.discardedPieces} destroyed`, x + 14, y + 42);
+  ctx.fillText(
+    fitText(
+      ctx,
+      `${getLevelDifficulty(game.level)} - ${game.placedPieces} placed - ${game.discardedPieces} destroyed`,
+      textMaxW,
+    ),
+    x + 14,
+    y + 42,
+  );
 
-  const mx = x + 190;
   const my = y + 35;
   ctx.fillStyle = "#243447";
   ctx.font = "900 16px system-ui, sans-serif";
@@ -434,4 +444,13 @@ function wrapText(ctx, text, x, y, maxWidth, lineHeight) {
     }
   });
   ctx.fillText(line.trim(), x, currentY);
+}
+
+function fitText(ctx, text, maxWidth) {
+  if (ctx.measureText(text).width <= maxWidth) return text;
+  let fitted = text;
+  while (fitted.length > 1 && ctx.measureText(`${fitted}...`).width > maxWidth) {
+    fitted = fitted.slice(0, -1);
+  }
+  return `${fitted.trim()}...`;
 }
