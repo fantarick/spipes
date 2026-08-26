@@ -1,4 +1,4 @@
-import { LEVELS } from "./levels.js";
+import { getLevelDifficulty, LEVELS } from "./levels.js";
 import { getSelectedPiece, countFreeCells } from "./game.js";
 
 export function getDomRefs() {
@@ -17,9 +17,9 @@ export function getDomRefs() {
 }
 
 export function updateDom(game, refs) {
-  refs.statusEl.textContent = `Level ${game.levelIndex + 1}/${LEVELS.length} - ${formatTimer(
-    game.timerRemaining,
-  )} to faucet - ${countFreeCells(game)} free cells`;
+  refs.statusEl.textContent = `Level ${game.levelIndex + 1}/${LEVELS.length} - ${getLevelDifficulty(
+    game.level,
+  )} - ${formatTimer(game.timerRemaining)} to faucet - ${countFreeCells(game)} free cells`;
   refs.startScreen.hidden = game.state !== "intro";
   refs.prevButton.disabled = game.levelIndex <= 0;
   refs.nextButton.disabled = game.levelIndex >= Math.min(game.highestUnlocked, LEVELS.length - 1);
